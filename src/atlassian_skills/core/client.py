@@ -147,12 +147,14 @@ class BaseClient:
         max_retries: int = 3,
         verify: ssl.SSLContext | bool = True,
         verbose: int = 0,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.credential = credential
         self.timeout = timeout
         self.max_retries = max_retries
         self.verbose = verbose
+        self.extra_headers: dict[str, str] = extra_headers or {}
         try:
             self._client = httpx.Client(timeout=timeout, verify=verify)
         except OSError as error:  # ssl.SSLError is an OSError: a broken SSL_CERT_FILE/DIR lands here
@@ -212,7 +214,7 @@ class BaseClient:
             url = path
         else:
             url = f"{self.base_url}/{path.lstrip('/')}"
-        merged_headers = {**self.credential.to_header(), **(headers or {})}
+        merged_headers = {**self.extra_headers, **self.credential.to_header(), **(headers or {})}
 
         attempt = 0
         delay = 1.0
@@ -223,7 +225,8 @@ class BaseClient:
         while True:
             started = time.monotonic()
             if self.verbose >= 2:
-                _log_headers(">", merged_headers)
+                # Configured extra headers may carry tokens (e.g. a proxy auth header), so mask them too.
+                _log_headers(">", merged_headers, frozenset(name.lower() for name in self.extra_headers))
                 _log_proxy_env()
             try:
                 response_limit = max_response_bytes or MAX_API_RESPONSE_BYTES
@@ -462,9 +465,9 @@ def _vlog(message: str) -> None:
     print(f"[atls] {message}", file=sys.stderr)
 
 
-def _render_header(name: str, value: str) -> str:
+def _render_header(name: str, value: str, extra_masked: frozenset[str] = frozenset()) -> str:
     lowered = name.lower()
-    if lowered in _MASKED_HEADERS:
+    if lowered in _MASKED_HEADERS or lowered in extra_masked:
         return f"{name}: <redacted len={len(value)}>"
     if lowered == "location":
         # Hiding Location would defeat the point of verbose here — a proxy bounce
@@ -473,9 +476,9 @@ def _render_header(name: str, value: str) -> str:
     return f"{name}: {safe_header_value(value, MAX_VERBOSE_HEADER_LEN)}"
 
 
-def _log_headers(marker: str, headers: Any) -> None:
+def _log_headers(marker: str, headers: Any, extra_masked: frozenset[str] = frozenset()) -> None:
     for name, value in headers.items():
-        _vlog(f"  {marker} {_render_header(str(name), str(value))}")
+        _vlog(f"  {marker} {_render_header(str(name), str(value), extra_masked)}")
 
 
 def _log_proxy_env() -> None:

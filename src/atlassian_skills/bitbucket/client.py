@@ -23,6 +23,28 @@ from atlassian_skills.core.errors import NotFoundError, ValidationError
 from atlassian_skills.core.pagination import DEFAULT_MAX_PAGINATION_PAGES
 
 
+def _merge_comment_anchor(activity: dict[str, Any]) -> dict[str, Any]:
+    """Surface a COMMENTED activity's inline anchor on its comment.
+
+    Bitbucket Server returns inline-comment diff anchors at the *activity* level
+    (``commentAnchor``, a sibling of ``comment``) rather than inside
+    ``comment.anchor``, which arrives ``null``. Copy it onto the comment so the
+    line number / path / lineType are available on the comment itself.
+
+    Returns the activity dict (mutated copy) when an anchor is merged, otherwise
+    the original object unchanged.
+    """
+    comment = activity.get("comment")
+    anchor = activity.get("commentAnchor")
+    if not isinstance(comment, dict) or not isinstance(anchor, dict):
+        return activity
+    if comment.get("anchor"):
+        return activity
+    merged = dict(activity)
+    merged["comment"] = {**comment, "anchor": anchor}
+    return merged
+
+
 class BitbucketClient(BaseClient):
     """Bitbucket Server/DC REST API client.
 
@@ -39,8 +61,9 @@ class BitbucketClient(BaseClient):
         timeout: float = 30.0,
         verify: ssl.SSLContext | bool = True,
         verbose: int = 0,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__(base_url, credential, timeout, verify=verify, verbose=verbose)
+        super().__init__(base_url, credential, timeout, verify=verify, verbose=verbose, extra_headers=extra_headers)
         self._current_user_slug: str | None = None
 
     # ------------------------------------------------------------------
@@ -222,10 +245,10 @@ class BitbucketClient(BaseClient):
         """
 
         def _pick_comment(raw: dict[str, Any]) -> dict[str, Any] | None:
-            comment = raw.get("comment")
-            if raw.get("action") == "COMMENTED" and isinstance(comment, dict):
-                return comment
-            return None
+            if raw.get("action") != "COMMENTED":
+                return None
+            comment = _merge_comment_anchor(raw).get("comment")
+            return comment if isinstance(comment, dict) else None
 
         items = self._get_paged(
             f"{self._pr_path(project, repo)}/{pr_id}/activities",
@@ -250,7 +273,7 @@ class BitbucketClient(BaseClient):
             f"{self._pr_path(project, repo)}/{pr_id}/activities",
             limit=limit,
         )
-        return [PullRequestActivity.model_validate(i) for i in items]
+        return [PullRequestActivity.model_validate(_merge_comment_anchor(i)) for i in items]
 
     # ------------------------------------------------------------------
     # Branches (Phase 1)

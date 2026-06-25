@@ -39,8 +39,9 @@ class JiraClient(BaseClient):
         timeout: float = 30.0,
         verify: ssl.SSLContext | bool = True,
         verbose: int = 0,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__(base_url, credential, timeout, verify=verify, verbose=verbose)
+        super().__init__(base_url, credential, timeout, verify=verify, verbose=verbose, extra_headers=extra_headers)
 
     # ------------------------------------------------------------------
     # User

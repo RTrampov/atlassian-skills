@@ -17,7 +17,7 @@ from atlassian_skills.confluence.migration_preflight import describe_migration_c
 from atlassian_skills.confluence.page_copy import copy_page as copy_confluence_page
 from atlassian_skills.confluence.read_projection import assess_read_projection
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import get_profile, load_config
+from atlassian_skills.core.config import apply_env_file, get_env_extra_headers, get_profile, load_config
 from atlassian_skills.core.dryrun import format_dry_run
 from atlassian_skills.core.errors import (
     AtlasError,
@@ -72,6 +72,7 @@ def _make_client(ctx_obj: dict[str, Any]) -> ConfluenceClient:
     timeout: float = ctx_obj.get("timeout", 30.0)
     config = load_config()
     profile = get_profile(config, profile_name)
+    apply_env_file(profile)
     url = profile.confluence_url or os.environ.get(f"ATLS_{profile_name.upper()}_CONFLUENCE_URL")
     if not url:
         typer.echo(
@@ -81,12 +82,14 @@ def _make_client(ctx_obj: dict[str, Any]) -> ConfluenceClient:
         )
         raise typer.Exit(1)
     credential = resolve_credential(profile_name, "confluence", profile)
+    extra_headers = {**get_env_extra_headers(profile_name), **profile.extra_headers}
     return ConfluenceClient(
         url.rstrip("/"),
         credential,
         timeout=timeout,
         verify=build_ssl_context(profile.ca_bundle),
         verbose=int(ctx_obj.get("verbose", 0)),
+        extra_headers=extra_headers or None,
     )
 
 

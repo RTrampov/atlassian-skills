@@ -84,6 +84,10 @@ class CommentAnchor(BaseModel):
     line_type: str | None = Field(default=None, alias="lineType")  # ADDED, REMOVED, CONTEXT
     file_type: str | None = Field(default=None, alias="fileType")  # FROM, TO
     src_path: str | None = Field(default=None, alias="srcPath")
+    from_hash: str | None = Field(default=None, alias="fromHash")
+    to_hash: str | None = Field(default=None, alias="toHash")
+    diff_type: str | None = Field(default=None, alias="diffType")  # EFFECTIVE, COMMIT, RANGE
+    orphaned: bool | None = None
 
 
 class PullRequestComment(BaseModel):
@@ -113,6 +117,9 @@ class PullRequestActivity(BaseModel):
     created_date: int | None = Field(default=None, alias="createdDate")
     user: BitbucketUser | None = None
     comment: PullRequestComment | None = None
+    # For inline comments, Bitbucket Server places the diff anchor here at the
+    # activity level (sibling of `comment`), NOT inside `comment.anchor`.
+    comment_anchor: CommentAnchor | None = Field(default=None, alias="commentAnchor")
 
 
 class Branch(BaseModel):

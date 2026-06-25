@@ -8,7 +8,7 @@ from typing import Any
 import typer
 
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import get_profile, load_config
+from atlassian_skills.core.config import apply_env_file, get_env_extra_headers, get_profile, load_config
 from atlassian_skills.core.dryrun import format_dry_run
 from atlassian_skills.core.errors import AtlasError, ValidationError, request_context_line
 from atlassian_skills.core.format import OutputFormat, format_output
@@ -90,6 +90,7 @@ def _make_client(ctx_obj: dict[str, Any]) -> JiraClient:
     timeout: float = ctx_obj.get("timeout", 30.0)
     config = load_config()
     profile = get_profile(config, profile_name)
+    apply_env_file(profile)
     url = profile.jira_url or os.environ.get(f"ATLS_{profile_name.upper()}_JIRA_URL")
     if not url:
         typer.echo(
@@ -99,12 +100,14 @@ def _make_client(ctx_obj: dict[str, Any]) -> JiraClient:
         )
         raise typer.Exit(1)
     credential = resolve_credential(profile_name, "jira", profile)
+    extra_headers = {**get_env_extra_headers(profile_name), **profile.extra_headers}
     return JiraClient(
         url.rstrip("/"),
         credential,
         timeout=timeout,
         verify=build_ssl_context(profile.ca_bundle),
         verbose=int(ctx_obj.get("verbose", 0)),
+        extra_headers=extra_headers or None,
     )
 
 

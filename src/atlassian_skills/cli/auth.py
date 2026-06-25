@@ -5,7 +5,7 @@ import os
 import typer
 
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import _LEGACY_TOKEN_VARS, get_env_token, get_profile, load_config
+from atlassian_skills.core.config import _LEGACY_TOKEN_VARS, apply_env_file, get_env_token, get_profile, load_config
 from atlassian_skills.core.errors import AuthError
 
 auth_app = typer.Typer(help="Manage authentication credentials", no_args_is_help=True)
@@ -58,6 +58,7 @@ def render_auth_status(profile_name: str = "default", *, resolve: bool = False) 
     """
     config = load_config()
     prof = get_profile(config, profile_name)
+    apply_env_file(prof)
 
     products = ("jira", "confluence", "bitbucket")
     url_fields = {"jira": prof.jira_url, "confluence": prof.confluence_url, "bitbucket": prof.bitbucket_url}
@@ -82,8 +83,7 @@ def render_auth_status(profile_name: str = "default", *, resolve: bool = False) 
             # while Storage says otherwise) is easy to miss.
             if prof.storage in ("keyring", "command"):
                 atls_var = f"ATLS_{profile_name.upper()}_{product.upper()}_TOKEN"
-                legacy = _LEGACY_TOKEN_VARS.get(product)
-                names = f"{atls_var} / {legacy}" if legacy else atls_var
+                names = " / ".join([atls_var, *_LEGACY_TOKEN_VARS.get(product, [])])
                 typer.echo(
                     f"    ⚠ storage={prof.storage} but an env var is shadowing it — "
                     f"{prof.storage} is NOT used.\n"
