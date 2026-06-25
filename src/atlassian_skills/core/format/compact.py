@@ -258,8 +258,10 @@ def _format_pr_comment(comment: PullRequestComment) -> str:
     state = comment.state or comment.severity or ""
     anchor_info = ""
     if comment.anchor and comment.anchor.path:
-        line = f":{comment.anchor.line}" if comment.anchor.line else ""
+        line = f":{comment.anchor.line}" if comment.anchor.line is not None else ""
         anchor_info = f"{comment.anchor.path}{line}"
+        if comment.anchor.line_type:
+            anchor_info += f" ({comment.anchor.line_type})"
     text_preview = (comment.text or "")[:80]
     return f"{comment.id} | {author} | {state} | {anchor_info} | {text_preview}"
 

@@ -29,8 +29,15 @@ def _safe_filename(title: str, fallback_id: str) -> str:
 
 
 class ConfluenceClient(BaseClient):
-    def __init__(self, base_url: str, credential: Credential, timeout: float = 30.0, verify: str | bool = True) -> None:
-        super().__init__(base_url, credential, timeout, verify=verify)
+    def __init__(
+        self,
+        base_url: str,
+        credential: Credential,
+        timeout: float = 30.0,
+        verify: str | bool = True,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(base_url, credential, timeout, verify=verify, extra_headers=extra_headers)
 
     # ------------------------------------------------------------------
     # Page read

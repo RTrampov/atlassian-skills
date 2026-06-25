@@ -8,7 +8,7 @@ import typer
 
 from atlassian_skills.bitbucket.client import BitbucketClient
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import get_profile, load_config
+from atlassian_skills.core.config import apply_env_file, get_env_extra_headers, get_profile, load_config
 from atlassian_skills.core.dryrun import format_dry_run
 from atlassian_skills.core.errors import AtlasError
 from atlassian_skills.core.format import OutputFormat, format_output
@@ -45,6 +45,7 @@ def _make_client(ctx_obj: dict[str, Any]) -> BitbucketClient:
     timeout: float = ctx_obj.get("timeout", 30.0)
     config = load_config()
     profile = get_profile(config, profile_name)
+    apply_env_file(profile)
     url = profile.bitbucket_url or os.environ.get(f"ATLS_{profile_name.upper()}_BITBUCKET_URL")
     if not url:
         typer.echo(
@@ -55,7 +56,8 @@ def _make_client(ctx_obj: dict[str, Any]) -> BitbucketClient:
         raise typer.Exit(1)
     credential = resolve_credential(profile_name, "bitbucket", profile)
     verify: str | bool = profile.ca_bundle if profile.ca_bundle else True
-    return BitbucketClient(url.rstrip("/"), credential, timeout=timeout, verify=verify)
+    extra_headers = {**get_env_extra_headers(profile_name), **profile.extra_headers}
+    return BitbucketClient(url.rstrip("/"), credential, timeout=timeout, verify=verify, extra_headers=extra_headers or None)
 
 
 def _fmt(ctx_obj: dict[str, Any]) -> OutputFormat:
@@ -295,7 +297,11 @@ def pr_comments(
             for c in comments:
                 author = c.author.display_name if c.author else "?"
                 state_tag = f"[{c.state}] " if c.state and c.state != "OPEN" else ""
-                typer.echo(f"#{c.id} {state_tag}{author}: {c.text or ''}")
+                loc = ""
+                if c.anchor and c.anchor.path:
+                    line = f":{c.anchor.line}" if c.anchor.line is not None else ""
+                    loc = f"({c.anchor.path}{line}) "
+                typer.echo(f"#{c.id} {loc}{state_tag}{author}: {c.text or ''}")
     except AtlasError as e:
         _handle_error(e, fmt)
 

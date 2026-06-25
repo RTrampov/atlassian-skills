@@ -10,7 +10,7 @@ import typer
 from atlassian_skills.confluence.client import ConfluenceClient
 from atlassian_skills.confluence.models import PageVersion
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import get_profile, load_config
+from atlassian_skills.core.config import apply_env_file, get_env_extra_headers, get_profile, load_config
 from atlassian_skills.core.dryrun import format_dry_run
 from atlassian_skills.core.errors import AtlasError, ExitCode
 from atlassian_skills.core.format import OutputFormat, format_output
@@ -49,6 +49,7 @@ def _make_client(ctx_obj: dict[str, Any]) -> ConfluenceClient:
     timeout: float = ctx_obj.get("timeout", 30.0)
     config = load_config()
     profile = get_profile(config, profile_name)
+    apply_env_file(profile)
     url = profile.confluence_url or os.environ.get(f"ATLS_{profile_name.upper()}_CONFLUENCE_URL")
     if not url:
         typer.echo(
@@ -59,7 +60,8 @@ def _make_client(ctx_obj: dict[str, Any]) -> ConfluenceClient:
         raise typer.Exit(1)
     credential = resolve_credential(profile_name, "confluence", profile)
     verify: str | bool = profile.ca_bundle if profile.ca_bundle else True
-    return ConfluenceClient(url.rstrip("/"), credential, timeout=timeout, verify=verify)
+    extra_headers = {**get_env_extra_headers(profile_name), **profile.extra_headers}
+    return ConfluenceClient(url.rstrip("/"), credential, timeout=timeout, verify=verify, extra_headers=extra_headers or None)
 
 
 def _fmt(ctx_obj: dict[str, Any]) -> OutputFormat:

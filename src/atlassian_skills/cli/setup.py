@@ -52,7 +52,7 @@ def _claude_md_block() -> str:
     return f"""{_ATLS_CLAUDE_BLOCK_START}
 <!-- ATLS:VERSION:{ver} -->
 ## Atlassian (atls)
-- Atlassian work (Jira/Confluence/Bitbucket/지라/컨플루언스/비트버킷) → load the `atls` skill BEFORE the first atls command.
+- Atlassian work (Jira/Confluence/Bitbucket) → load the `atls` skill BEFORE the first atls command.
 - This file only routes. Do NOT infer atls flags or syntax from here — the skill is the single source of truth.
 {_ATLS_CLAUDE_BLOCK_END}"""
 
@@ -63,7 +63,7 @@ def _codex_agents_block() -> str:
     return f"""{_ATLS_CODEX_BLOCK_START}
 <!-- ATLS:VERSION:{ver} -->
 ## Atlassian via atls
-- Atlassian work (Jira/Confluence/Bitbucket/지라/컨플루언스/비트버킷) → load the `$atls` skill BEFORE the first atls command.
+- Atlassian work (Jira/Confluence/Bitbucket) → load the `$atls` skill BEFORE the first atls command.
 - This file only routes. Do NOT infer atls flags or syntax from here — the skill is the single source of truth.
 {_ATLS_CODEX_BLOCK_END}"""
 
@@ -79,7 +79,7 @@ def _copilot_instructions_block() -> str:
     return f"""{_ATLS_COPILOT_BLOCK_START}
 <!-- ATLS:VERSION:{ver} -->
 ## Atlassian via atls
-- Atlassian work (Jira/Confluence/Bitbucket/지라/컨플루언스/비트버킷) → read the `atls` skill at `~/.copilot/skills/atls/SKILL.md` BEFORE the first atls command.
+- Atlassian work (Jira/Confluence/Bitbucket) → read the `atls` skill at `~/.copilot/skills/atls/SKILL.md` BEFORE the first atls command.
 - This file only routes. Do NOT infer atls flags or syntax from here — the skill is the single source of truth.
 {_ATLS_COPILOT_BLOCK_END}"""
 

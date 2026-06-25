@@ -42,6 +42,8 @@ class Profile(BaseModel):
     confluence_command: str | None = None
     bitbucket_command: str | None = None
     ca_bundle: str | None = None
+    extra_headers: dict[str, str] = {}
+    env_file: str | None = None
 
 
 class Config(BaseModel):
@@ -85,29 +87,31 @@ def get_profile(config: Config, name: str | None = None) -> Profile:
     return config.profiles.get(profile_name, Profile())
 
 
-# Legacy mcp-atlassian env var names (fallback)
-_LEGACY_TOKEN_VARS: dict[str, str] = {
-    "jira": "JIRA_PERSONAL_TOKEN",
-    "confluence": "CONFLUENCE_PERSONAL_TOKEN",
-    "bitbucket": "BITBUCKET_TOKEN",
+# Legacy env var names tried in order after ATLS_{PROFILE}_{PRODUCT}_TOKEN.
+# Each product lists its accepted names from most to least specific.
+_LEGACY_TOKEN_VARS: dict[str, list[str]] = {
+    "jira": ["JIRA_PERSONAL_TOKEN", "JIRA_API_TOKEN", "JIRA_TOKEN"],
+    "confluence": ["CONFLUENCE_PERSONAL_TOKEN", "CONFLUENCE_API_TOKEN", "CONFLUENCE_TOKEN"],
+    "bitbucket": ["BITBUCKET_TOKEN", "BITBUCKET_API_TOKEN", "BITBUCKET_PERSONAL_TOKEN"],
 }
 
 _LEGACY_USER_VARS: dict[str, str] = {
+    "jira": "JIRA_USERNAME",
+    "confluence": "CONFLUENCE_USERNAME",
     "bitbucket": "BITBUCKET_USERNAME",
 }
 
 
 def get_env_token(profile_name: str, product: str) -> str | None:
     """Read token from env. Priority: ATLS_{PROFILE}_{PRODUCT}_TOKEN > legacy vars."""
-    # New format first
     key = f"ATLS_{profile_name.upper()}_{product.upper()}_TOKEN"
     val = os.environ.get(key)
     if val:
         return val
-    # Legacy mcp-atlassian format
-    legacy_key = _LEGACY_TOKEN_VARS.get(product.lower())
-    if legacy_key:
-        return os.environ.get(legacy_key)
+    for legacy_key in _LEGACY_TOKEN_VARS.get(product.lower(), []):
+        val = os.environ.get(legacy_key)
+        if val:
+            return val
     return None
 
 
@@ -127,3 +131,50 @@ def get_env_auth_method(profile_name: str, product: str) -> str | None:
     """Read ATLS_{PROFILE}_{PRODUCT}_AUTH from environment."""
     key = f"ATLS_{profile_name.upper()}_{product.upper()}_AUTH"
     return os.environ.get(key)
+
+
+def apply_env_file(profile: Profile) -> None:
+    """Load KEY=VALUE pairs from profile.env_file into os.environ as fallbacks.
+
+    Called once per CLI invocation before credential/header resolution so that
+    every tool that spawns atls as a subprocess gets the same values as an
+    interactive shell — no shell functions or session-level exports required.
+
+    Existing env vars take precedence (env_file is a fallback, not an override),
+    so explicit exports and CI-injected secrets are never shadowed.
+    Blank lines and lines starting with ``#`` are ignored.
+    """
+    if not profile.env_file:
+        return
+    path = Path(profile.env_file).expanduser()
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value.strip()
+
+
+def get_env_extra_headers(profile_name: str) -> dict[str, str]:
+    """Read ATLS_{PROFILE}_EXTRA_HEADERS from environment.
+
+    Format: comma-separated ``Key=Value`` pairs, e.g.
+    ``X-Zero-Trust-Token=eyJ...,X-Custom=foo``.
+    Splitting is done on the first ``=`` only so JWT values are preserved.
+    """
+    raw = os.environ.get(f"ATLS_{profile_name.upper()}_EXTRA_HEADERS", "")
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            result[k.strip()] = v.strip()
+    return result

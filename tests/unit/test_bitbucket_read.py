@@ -203,6 +203,102 @@ def test_list_pull_request_comments() -> None:
     assert result[1].state == "RESOLVED"
 
 
+@respx.mock
+def test_list_pull_request_comments_activity_level_anchor() -> None:
+    # Real Bitbucket Server places inline-comment diff anchors at the ACTIVITY
+    # level (`commentAnchor`, sibling of `comment`); `comment.anchor` is null.
+    activities = {
+        "size": 1,
+        "limit": 25,
+        "isLastPage": True,
+        "values": [
+            {
+                "id": 91513059,
+                "action": "COMMENTED",
+                "createdDate": 1782397270038,
+                "comment": {
+                    "id": 3836879,
+                    "text": "`go mod tidy`?",
+                    "author": {"name": "nik", "displayName": "Nikolay Bekirov"},
+                    "severity": "NORMAL",
+                    "state": "OPEN",
+                    "version": 0,
+                    "anchor": None,
+                    "comments": [],
+                },
+                "commentAnchor": {
+                    "fromHash": "b329277c",
+                    "toHash": "2a87a5d9",
+                    "line": 43,
+                    "lineType": "CONTEXT",
+                    "fileType": "FROM",
+                    "path": "go.sum",
+                    "diffType": "EFFECTIVE",
+                    "orphaned": False,
+                },
+            },
+        ],
+        "start": 0,
+    }
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
+        return_value=httpx.Response(200, json=activities)
+    )
+
+    result = client.list_pull_request_comments("PROJ", "my-repo", 1)
+
+    assert len(result) == 1
+    anchor = result[0].anchor
+    assert anchor is not None
+    assert anchor.path == "go.sum"
+    assert anchor.line == 43
+    assert anchor.line_type == "CONTEXT"
+    assert anchor.file_type == "FROM"
+    assert anchor.from_hash == "b329277c"
+    assert anchor.to_hash == "2a87a5d9"
+    assert anchor.diff_type == "EFFECTIVE"
+    assert anchor.orphaned is False
+
+
+@respx.mock
+def test_list_pull_request_activities_exposes_comment_anchor() -> None:
+    activities = {
+        "size": 1,
+        "limit": 25,
+        "isLastPage": True,
+        "values": [
+            {
+                "id": 91513059,
+                "action": "COMMENTED",
+                "createdDate": 1782397270038,
+                "comment": {
+                    "id": 3836879,
+                    "text": "inline note",
+                    "author": {"name": "nik", "displayName": "Nikolay Bekirov"},
+                    "state": "OPEN",
+                    "version": 0,
+                    "anchor": None,
+                    "comments": [],
+                },
+                "commentAnchor": {"line": 43, "path": "go.sum", "lineType": "CONTEXT"},
+            },
+        ],
+        "start": 0,
+    }
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
+        return_value=httpx.Response(200, json=activities)
+    )
+
+    result = client.list_pull_request_activities("PROJ", "my-repo", 1)
+
+    assert len(result) == 1
+    # Exposed both at activity level and merged onto the comment.
+    assert result[0].comment_anchor is not None
+    assert result[0].comment_anchor.line == 43
+    assert result[0].comment is not None
+    assert result[0].comment.anchor is not None
+    assert result[0].comment.anchor.path == "go.sum"
+
+
 # ---------------------------------------------------------------------------
 # list_pull_request_commits
 # ---------------------------------------------------------------------------

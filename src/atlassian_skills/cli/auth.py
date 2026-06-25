@@ -5,7 +5,7 @@ import os
 import typer
 
 from atlassian_skills.core.auth import resolve_credential
-from atlassian_skills.core.config import _LEGACY_TOKEN_VARS, get_env_token, get_profile, load_config
+from atlassian_skills.core.config import _LEGACY_TOKEN_VARS, apply_env_file, get_env_token, get_profile, load_config
 from atlassian_skills.core.errors import AuthError
 
 auth_app = typer.Typer(help="Manage authentication credentials", no_args_is_help=True)
@@ -58,6 +58,7 @@ def render_auth_status(profile_name: str = "default", *, resolve: bool = False) 
     """
     config = load_config()
     prof = get_profile(config, profile_name)
+    apply_env_file(prof)
 
     products = ("jira", "confluence", "bitbucket")
     url_fields = {"jira": prof.jira_url, "confluence": prof.confluence_url, "bitbucket": prof.bitbucket_url}

@@ -8,6 +8,84 @@ A Python CLI + Claude Code Skill that lets LLM agents drive our internal Atlassi
 - **Package**: `atlassian-skills`
 - **Current version**: 0.2.8 (keyring + shell-command credential storage with per-product commands; keyring-only `atls setup` wizard; `atls auth status --resolve`; `atls doctor` PyPI freshness banner; legacy `setup all/codex/claude/paths/status` deprecated for removal in 0.3.0)
 
+## Running from a local clone
+
+```bash
+cd ~/projects/atlassian-skills
+uv tool install --editable .   # installs atls to ~/.local/bin, editable — source changes apply immediately
+atls --help
+```
+
+### Configuration
+
+Create `~/.config/atlassian-skills/config.toml`:
+
+```toml
+[profiles.default]
+jira_url       = "https://jira.example.com"
+confluence_url = "https://confluence.example.com"
+bitbucket_url  = "https://bitbucket.example.com"
+
+# env_file: path to a KEY=VALUE file loaded as fallback env on every invocation.
+# Tokens and extra headers defined here are picked up in all contexts —
+# interactive shells, scripts, and AI agent subprocesses — with no shell exports.
+env_file = "~/.config/my-credentials"
+
+# ca_bundle = "/path/to/ca.pem"   # optional: path to CA bundle, or false to skip TLS verify
+```
+
+### Credentials file
+
+`env_file` points to any `KEY=VALUE` file (comments and blank lines are ignored).
+Supported variables:
+
+| Purpose | Accepted variable names (tried in order) |
+|---------|------------------------------------------|
+| Jira token | `ATLS_DEFAULT_JIRA_TOKEN`, `JIRA_PERSONAL_TOKEN`, `JIRA_API_TOKEN`, `JIRA_TOKEN` |
+| Confluence token | `ATLS_DEFAULT_CONFLUENCE_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_TOKEN` |
+| Bitbucket token | `ATLS_DEFAULT_BITBUCKET_TOKEN`, `BITBUCKET_TOKEN`, `BITBUCKET_API_TOKEN`, `BITBUCKET_PERSONAL_TOKEN` |
+| Extra HTTP headers | `ATLS_DEFAULT_EXTRA_HEADERS` |
+
+`ATLS_DEFAULT_EXTRA_HEADERS` accepts comma-separated `Header-Name=value` pairs. Values
+containing `=` (JWTs, base64) are preserved — splitting is on the first `=` per pair:
+
+```
+ATLS_DEFAULT_EXTRA_HEADERS=X-My-Proxy-Token=eyJ...
+```
+
+Explicit env vars always override the file, so CI secrets and shell exports are never shadowed.
+
+### Installing the Claude Code skill
+
+**With a skill manager (skillshare or similar):**
+
+```bash
+cp -r src/atlassian_skills/_assets/skills/atls ~/.config/skillshare/skills/
+skillshare sync
+```
+
+**Without a skill manager:**
+
+```bash
+atls setup   # interactive wizard — installs skill and injects routing block into ~/.claude/CLAUDE.md
+```
+
+After upstream updates, re-copy and re-sync (editable install picks up code changes; only the skill asset file needs manual re-copy).
+
+### Verify
+
+```bash
+atls doctor
+```
+
+### Run checks before committing
+
+```bash
+uv run ruff check src/ tests/
+uv run mypy src/
+uv run pytest
+```
+
 ## Build & Run
 
 ```bash

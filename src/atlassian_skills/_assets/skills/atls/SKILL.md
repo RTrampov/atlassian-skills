@@ -1,15 +1,14 @@
 ---
 name: atls
 description: |
-  ALL Atlassian work — Jira, Confluence, Bitbucket on Server/DC
-  (지라/컨플루언스/비트버킷). Load BEFORE the first atls command.
+  ALL Atlassian work — Jira, Confluence, Bitbucket on Server/DC.
+  Load BEFORE the first atls command.
 
   Without this body, you WILL guess atls conventions wrong: JQL/CQL is
   positional (not --jql), --format=json (not -f json — `-f` is
   --md-file), push-md vs page update, exit 5 = stale-version.
 
-  TRIGGER: Jira, Confluence, Bitbucket, atls, JQL, CQL, PROJ-123,
-  지라, 컨플루언스, 비트버킷, 아틀라시안.
+  TRIGGER: Jira, Confluence, Bitbucket, atls, JQL, CQL, PROJ-123.
 ---
 
 # atls — Atlassian CLI Dispatcher

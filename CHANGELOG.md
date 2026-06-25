@@ -20,6 +20,18 @@ use the same commands — on Windows they run identically in PowerShell, cmd, or
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Bitbucket inline-comment line numbers** are no longer `null`. Bitbucket Server returns
+  the diff anchor for inline PR comments at the *activity* level (`commentAnchor`, a sibling
+  of `comment`) rather than inside `comment.anchor`. `atls bitbucket pr comments` and
+  `atls bitbucket pr activity` now merge that anchor onto the comment, so `path`, `line`,
+  `lineType`, and `fileType` are populated. The default/compact output shows the
+  `(path:line)` location inline, and JSON output exposes the full anchor (now including
+  `from_hash`, `to_hash`, `diff_type`, and `orphaned`). `PullRequestActivity` also exposes
+  the raw `comment_anchor`.
+
 ## [0.2.8] - 2026-05-29
 
 ### Added
@@ -174,8 +186,7 @@ be removed in 0.3.0.
   `-f` warnings) are removed, since they were giving agents false confidence and
   causing them to guess wrong flag names (e.g. `--jql` for `jira issue search`).
 - **Skill `description` rewritten as a load-trigger** — failure-mode style ("you
-  WILL guess wrong without this body") plus Korean trigger keywords (지라/
-  컨플루언스/비트버킷/아틀라시안) so the skill auto-loads on Korean prompts too.
+  WILL guess wrong without this body").
 
 ### Added
 - `atls setup status` and `atls setup claude` now warn when a legacy

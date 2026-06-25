@@ -20,6 +20,28 @@ from atlassian_skills.core.client import BaseClient
 from atlassian_skills.core.errors import NotFoundError, ValidationError
 
 
+def _merge_comment_anchor(activity: dict[str, Any]) -> dict[str, Any]:
+    """Surface a COMMENTED activity's inline anchor on its comment.
+
+    Bitbucket Server returns inline-comment diff anchors at the *activity* level
+    (``commentAnchor``, a sibling of ``comment``) rather than inside
+    ``comment.anchor``, which arrives ``null``. Copy it onto the comment so the
+    line number / path / lineType are available on the comment itself.
+
+    Returns the activity dict (mutated copy) when an anchor is merged, otherwise
+    the original object unchanged.
+    """
+    comment = activity.get("comment")
+    anchor = activity.get("commentAnchor")
+    if not isinstance(comment, dict) or not isinstance(anchor, dict):
+        return activity
+    if comment.get("anchor"):
+        return activity
+    merged = dict(activity)
+    merged["comment"] = {**comment, "anchor": anchor}
+    return merged
+
+
 class BitbucketClient(BaseClient):
     """Bitbucket Server/DC REST API client.
 
@@ -35,8 +57,9 @@ class BitbucketClient(BaseClient):
         credential: Credential,
         timeout: float = 30.0,
         verify: str | bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__(base_url, credential, timeout, verify=verify)
+        super().__init__(base_url, credential, timeout, verify=verify, extra_headers=extra_headers)
         self._current_user_slug: str | None = None
 
     # ------------------------------------------------------------------
@@ -184,7 +207,8 @@ class BitbucketClient(BaseClient):
         comments: list[PullRequestComment] = []
         for item in items:
             if item.get("action") == "COMMENTED" and item.get("comment"):
-                comments.append(PullRequestComment.model_validate(item["comment"]))
+                merged = _merge_comment_anchor(item)
+                comments.append(PullRequestComment.model_validate(merged["comment"]))
         return comments
 
     def list_pull_request_commits(self, project: str, repo: str, pr_id: int, *, limit: int = 25) -> list[Commit]:
@@ -203,7 +227,7 @@ class BitbucketClient(BaseClient):
             f"{self._pr_path(project, repo)}/{pr_id}/activities",
             limit=limit,
         )
-        return [PullRequestActivity.model_validate(i) for i in items]
+        return [PullRequestActivity.model_validate(_merge_comment_anchor(i)) for i in items]
 
     # ------------------------------------------------------------------
     # Branches (Phase 1)

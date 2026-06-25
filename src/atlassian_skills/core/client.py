@@ -22,11 +22,13 @@ class BaseClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify: str | bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.credential = credential
         self.timeout = timeout
         self.max_retries = max_retries
+        self.extra_headers: dict[str, str] = extra_headers or {}
         self._client = httpx.Client(timeout=timeout, verify=verify)
 
     # ------------------------------------------------------------------
@@ -44,7 +46,7 @@ class BaseClient:
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         url = path if path.startswith(("http://", "https://")) else f"{self.base_url}/{path.lstrip('/')}"
-        merged_headers = {**self.credential.to_header(), **(headers or {})}
+        merged_headers = {**self.extra_headers, **self.credential.to_header(), **(headers or {})}
 
         attempt = 0
         delay = 1.0

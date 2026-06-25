@@ -83,18 +83,70 @@ export ATLS_DEFAULT_BITBUCKET_URL="https://your-bitbucket.example.com"
 ```
 For non-default profiles, replace `DEFAULT` with the profile name (e.g. `ATLS_CORP_JIRA_URL`).
 
-**3. Set tokens (Linux / macOS — `~/.zshrc` / `~/.bashrc`)**
+**3. Set tokens**
+
+The following env var names are all accepted, tried in the order shown — the first one set wins:
+
+| Product | Accepted names (highest → lowest priority) |
+|---------|---------------------------------------------|
+| Jira | `ATLS_DEFAULT_JIRA_TOKEN`, `JIRA_PERSONAL_TOKEN`, `JIRA_API_TOKEN`, `JIRA_TOKEN` |
+| Confluence | `ATLS_DEFAULT_CONFLUENCE_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_TOKEN` |
+| Bitbucket | `ATLS_DEFAULT_BITBUCKET_TOKEN`, `BITBUCKET_TOKEN`, `BITBUCKET_API_TOKEN`, `BITBUCKET_PERSONAL_TOKEN` |
+
+Replace `DEFAULT` with the profile name for multi-profile setups (e.g. `ATLS_CORP_JIRA_TOKEN`).
+
+**Linux / macOS** — add to `~/.zshrc` / `~/.bashrc`:
 ```bash
-# Standard names (compatible with existing MCP servers)
 export JIRA_PERSONAL_TOKEN="your-jira-pat"
 export CONFLUENCE_PERSONAL_TOKEN="your-confluence-pat"
 export BITBUCKET_TOKEN="your-bitbucket-http-access-token"
-
-# Multi-profile
-export ATLS_CORP_JIRA_TOKEN="..."
-export ATLS_CORP_CONFLUENCE_TOKEN="..."
-export ATLS_CORP_BITBUCKET_TOKEN="..."
 ```
+
+**Windows** — pick any method:
+- `Win + R` → `sysdm.cpl` → Advanced → Environment Variables → New (under User variables). Open a *new* terminal afterwards.
+- PowerShell (permanent): `[Environment]::SetEnvironmentVariable("JIRA_PERSONAL_TOKEN", "your-pat", "User")`
+- cmd / setx (permanent): `setx JIRA_PERSONAL_TOKEN "your-pat"`
+
+> `atls config set ...` works identically on Windows — config is stored at `%APPDATA%\atlassian-skills\config.toml` via `platformdirs`.
+
+**Credentials file (`env_file`) — recommended for teams and AI agent contexts**
+
+Instead of exporting vars in your shell, point `env_file` at any `KEY=VALUE` file. `atls` reads it on every invocation — including when spawned as a subprocess by an AI agent — so tokens and headers are always current without shell functions, session restarts, or per-tool wrappers.
+
+```toml
+# ~/.config/atlassian-skills/config.toml
+[profiles.default]
+jira_url       = "https://your-jira.example.com"
+confluence_url = "https://your-confluence.example.com"
+bitbucket_url  = "https://your-bitbucket.example.com"
+env_file       = "~/.config/my-atlassian-credentials"
+```
+
+```bash
+# ~/.config/my-atlassian-credentials
+JIRA_PERSONAL_TOKEN=your-jira-pat
+CONFLUENCE_PERSONAL_TOKEN=your-confluence-pat
+BITBUCKET_TOKEN=your-bitbucket-pat
+```
+
+Blank lines and `#` comments are ignored. Existing env vars always win — `env_file` is a fallback, not an override, so CI-injected secrets and explicit exports are never shadowed.
+
+**Extra HTTP headers (`ATLS_DEFAULT_EXTRA_HEADERS`)**
+
+Some corporate deployments require an additional header on every request (e.g. a Zero Trust proxy token). Set it in your credentials file or as an env var:
+
+```bash
+ATLS_DEFAULT_EXTRA_HEADERS=X-My-Proxy-Token=eyJ...
+```
+
+Multiple headers: comma-separated `Header-Name=value` pairs. Values containing `=` (JWTs, base64) are preserved — splitting is on the first `=` per pair. For a static value you can also set it in `config.toml`:
+
+```toml
+[profiles.default.extra_headers]
+X-My-Proxy-Token = "value"
+```
+
+`config.toml` takes precedence over the env var for the same header key. For a rotating token, keep it in `env_file` only — not in `[extra_headers]`.
 
 **File-based storage (manual — for the security-conscious without a keyring)**
 
@@ -106,29 +158,10 @@ printf '%s' 'YOUR_CONFLUENCE_PAT' > ~/.secrets/confluence_pat && chmod 600 ~/.se
 printf '%s' 'YOUR_BITBUCKET_PAT'  > ~/.secrets/bitbucket_pat  && chmod 600 ~/.secrets/bitbucket_pat
 
 # Then in ~/.zshrc or ~/.bashrc:
-# >>> atls env >>>
 [ -f ~/.secrets/jira_pat ]       && export JIRA_PERSONAL_TOKEN="$(cat ~/.secrets/jira_pat)"
 [ -f ~/.secrets/confluence_pat ] && export CONFLUENCE_PERSONAL_TOKEN="$(cat ~/.secrets/confluence_pat)"
 [ -f ~/.secrets/bitbucket_pat ]  && export BITBUCKET_TOKEN="$(cat ~/.secrets/bitbucket_pat)"
-# <<< atls env <<<
 ```
-
-**Set tokens (Windows)**
-`atls` runs natively on Windows; pick whichever method you prefer — all produce the same result.
-
-- **System Properties GUI**: `Win + R` → `sysdm.cpl` → Advanced → Environment Variables → New (under User variables): `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `BITBUCKET_TOKEN`, plus `ATLS_DEFAULT_*_URL`. Open a *new* terminal afterwards.
-- **PowerShell** (permanent, picked up by new sessions):
-  ```powershell
-  [Environment]::SetEnvironmentVariable("JIRA_PERSONAL_TOKEN", "your-jira-pat", "User")
-  [Environment]::SetEnvironmentVariable("ATLS_DEFAULT_JIRA_URL", "https://your-jira.example.com", "User")
-  ```
-- **cmd / `setx`** (permanent):
-  ```cmd
-  setx JIRA_PERSONAL_TOKEN "your-jira-pat"
-  setx ATLS_DEFAULT_JIRA_URL "https://your-jira.example.com"
-  ```
-
-> `atls config set ...` works identically on Windows — config is stored at `%APPDATA%\atlassian-skills\config.toml` via `platformdirs`.
 
 **Basic auth (legacy instances without PAT support)**
 
@@ -142,12 +175,20 @@ The same `*_AUTH=basic` / `*_USER` / `*_TOKEN` triple works for `jira`, `conflue
 
 **4. Verify**
 ```bash
-atls auth status        # equivalent to the Auth section of `atls doctor`
+atls doctor        # full diagnostics: paths, skill versions, auth resolution
+atls auth status   # auth only
 ```
 
-**Priority**
-- URLs — CLI flags > `ATLS_*` env > config.toml
-- Tokens — CLI flags > `ATLS_*` env > `JIRA_PERSONAL_TOKEN` / `CONFLUENCE_PERSONAL_TOKEN` / `BITBUCKET_TOKEN` > the profile's `storage` provider (keyring / command)
+**Precedence (high → low)**
+
+| | URLs | Tokens | Extra headers |
+|---|---|---|---|
+| 1 | CLI `--url` flag | CLI `--token` flag | — |
+| 2 | `ATLS_DEFAULT_*_URL` env | `ATLS_DEFAULT_*_TOKEN` env | `ATLS_DEFAULT_EXTRA_HEADERS` env |
+| 3 | legacy env (`JIRA_PERSONAL_TOKEN`, `JIRA_API_TOKEN`, `JIRA_TOKEN`, …) | legacy env vars (see table above) | — |
+| 4 | `config.toml` `*_url` | keyring (storage=keyring) or command (storage=command) | `config.toml` `[extra_headers]` |
+
+`env_file` injects into levels 2–3 for any var not already present in the process environment.
 
 > Prefer not to keep tokens in env vars? See **System keyring and shell-command providers** below
 > to store them in the OS keyring or fetch them from 1Password / `pass` / Bitwarden on demand.
@@ -428,22 +469,40 @@ atlassian-skills is a CLI re-implementation of mcp-atlassian's Jira and Confluen
 
 ## Development
 
+**Installing from a fork or local clone**
+
 ```bash
-# Setup
-uv sync
+git clone https://github.com/your-fork/atlassian-skills
+cd atlassian-skills
+uv tool install --editable .        # puts atls on PATH, source changes apply immediately
+atls --help
+```
 
-# Local install (editable)
-uv tool install -e .              # from repo root
-uv tool install --force -e .      # reinstall after entrypoint changes
+`uv tool install --editable` is equivalent to `pip install -e .` but installs into a dedicated tool venv and links the binary to `~/.local/bin/atls`. Edits to `src/` take effect on the next `atls` invocation — no reinstall needed. Use `uv tool install --force --editable .` to reinstall after entrypoint changes.
 
-# Test
+**Installing the Claude Code skill from source**
+
+With a skill manager (e.g. skillshare):
+```bash
+cp -r src/atlassian_skills/_assets/skills/atls ~/.config/skillshare/skills/
+skillshare sync
+```
+
+Without a skill manager:
+```bash
+atls setup   # interactive wizard — installs skill + injects routing block into ~/.claude/CLAUDE.md
+```
+
+After pulling upstream changes, re-copy the skill asset and re-sync (the editable install picks up code changes automatically; only the asset file needs a manual update).
+
+**Running checks**
+
+```bash
 uv run pytest
-
-# Lint
 uv run ruff check src/ tests/
 uv run mypy src/
-
-# Build
+uv run pytest -m integration       # live network — requires configured credentials
+uv run pytest tests/benchmarks     # token budget regression
 uv build
 ```
 
