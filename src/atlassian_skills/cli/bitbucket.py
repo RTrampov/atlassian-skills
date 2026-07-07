@@ -292,6 +292,9 @@ def pr_comments(
     project: str = typer.Argument(..., help="Project key"),
     repo: str = typer.Argument(..., help="Repository slug"),
     pr_id: int = typer.Argument(..., help="Pull request ID"),
+    unresolved_only: bool = typer.Option(
+        False, "--unresolved-only", help="Only show comment threads that are not yet resolved"
+    ),
     format: str | None = typer.Option(None, "--format", help="Override output format"),
 ) -> None:
     """List comments on a pull request."""
@@ -300,13 +303,15 @@ def pr_comments(
     try:
         client = _make_client(ctx.obj)
         comments = client.list_pull_request_comments(project, repo, pr_id)
+        if unresolved_only:
+            comments = [c for c in comments if not c.thread_resolved]
 
         if fmt == OutputFormat.JSON or fmt == OutputFormat.RAW:
             typer.echo(format_output([c.model_dump() for c in comments], fmt))
         else:
             for c in comments:
                 author = c.author.display_name if c.author else "?"
-                state_tag = f"[{c.state}] " if c.state and c.state != "OPEN" else ""
+                state_tag = "[RESOLVED] " if c.thread_resolved else ""
                 loc = ""
                 if c.anchor and c.anchor.path:
                     line = f":{c.anchor.line}" if c.anchor.line is not None else ""

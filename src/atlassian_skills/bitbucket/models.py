@@ -100,6 +100,13 @@ class PullRequestComment(BaseModel):
     updated_date: int | None = Field(default=None, alias="updatedDate")
     severity: str | None = None  # NORMAL, BLOCKER
     state: str | None = None  # OPEN, RESOLVED
+    # Whether the *thread* (not just this comment) is resolved. This is what
+    # Bitbucket's UI shows as the "Resolved" badge; `state` above tracks a
+    # different, largely vestigial per-comment flag that is almost always
+    # "OPEN" in practice. Not present on activity-feed snapshots — only
+    # populated when the comment is fetched/enriched live (see
+    # `BitbucketClient.list_pull_request_comments`).
+    thread_resolved: bool | None = Field(default=None, alias="threadResolved")
     anchor: CommentAnchor | None = None
     comments: list[PullRequestComment] = Field(default_factory=list)  # threaded replies
     version: int | None = None  # for optimistic locking
