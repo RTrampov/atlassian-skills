@@ -193,12 +193,27 @@ class BitbucketClient(BaseClient):
         return resp.text
 
     def list_pull_request_comments(
-        self, project: str, repo: str, pr_id: int, *, limit: int = 25
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        *,
+        limit: int = 25,
+        include_thread_resolved: bool = True,
     ) -> list[PullRequestComment]:
         """Extract comments from PR activities.
 
         Bitbucket Server's /comments endpoint requires a path parameter.
         Instead, we use /activities and filter for COMMENTED actions.
+
+        The activity feed is a point-in-time snapshot taken when the comment
+        was posted: its `state` field is essentially always "OPEN" and never
+        reflects a later resolve/reopen. To report the *current* resolved
+        status (what the Bitbucket UI shows as the "Resolved" badge), each
+        comment is enriched with a live GET .../comments/{id} call, which
+        exposes `state` and `threadResolved` as of now. Set
+        `include_thread_resolved=False` to skip these extra requests (one per
+        comment) if only the historical activity snapshot is needed.
         """
         items = self._get_paged(
             f"{self._pr_path(project, repo)}/{pr_id}/activities",
@@ -208,8 +223,34 @@ class BitbucketClient(BaseClient):
         for item in items:
             if item.get("action") == "COMMENTED" and item.get("comment"):
                 merged = _merge_comment_anchor(item)
-                comments.append(PullRequestComment.model_validate(merged["comment"]))
+                comment_dict = merged["comment"]
+                if include_thread_resolved:
+                    comment_dict = self._enrich_comment_live_state(project, repo, pr_id, comment_dict)
+                comments.append(PullRequestComment.model_validate(comment_dict))
         return comments
+
+    def _enrich_comment_live_state(
+        self, project: str, repo: str, pr_id: int, comment_dict: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Overlay live `state`/`threadResolved` onto an activity-derived comment dict.
+
+        Only a small set of keys are copied from the live response: it lacks
+        `anchor` (Bitbucket Server only returns diff anchors via the
+        activities feed) and its own `comments` (replies) would otherwise
+        clobber the replies already parsed from the activity payload.
+        """
+        comment_id = comment_dict.get("id")
+        if comment_id is None:
+            return comment_dict
+        try:
+            live = self._get_comment(project, repo, pr_id, comment_id)
+        except NotFoundError:
+            return comment_dict
+        enriched = dict(comment_dict)
+        for key in ("state", "threadResolved", "version", "updatedDate", "text"):
+            if key in live:
+                enriched[key] = live[key]
+        return enriched
 
     def list_pull_request_commits(self, project: str, repo: str, pr_id: int, *, limit: int = 25) -> list[Commit]:
         """GET .../pull-requests/{id}/commits"""

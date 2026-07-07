@@ -23,6 +23,17 @@ use the same commands — on Windows they run identically in PowerShell, cmd, or
 ## [Unreleased]
 
 ### Fixed
+- **Bitbucket comment resolved status was always reported as "OPEN"**, even for threads
+  the Bitbucket UI shows as "Resolved". `atls bitbucket pr comments` built comment state
+  from the PR's activity feed, a point-in-time snapshot taken when the comment was posted
+  that Bitbucket never rewrites after a later resolve/reopen. Each comment is now enriched
+  with a live `GET .../comments/{id}` call exposing the current `threadResolved` flag (the
+  UI's actual "Resolved" badge), separate from the largely vestigial per-comment `state`
+  field. `PullRequestComment` gains a `thread_resolved` field, compact output shows
+  `[RESOLVED]` based on it, and `pr comments` gains `--unresolved-only` to filter down to
+  threads that still need attention. Pass `include_thread_resolved=False` on
+  `list_pull_request_comments` to skip the extra per-comment requests when only the
+  historical activity snapshot is needed.
 - **Bitbucket inline-comment line numbers** are no longer `null`. Bitbucket Server returns
   the diff anchor for inline PR comments at the *activity* level (`commentAnchor`, a sibling
   of `comment`) rather than inside `comment.anchor`. `atls bitbucket pr comments` and

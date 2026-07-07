@@ -255,7 +255,10 @@ def _format_pull_request(pr: PullRequest) -> str:
 
 def _format_pr_comment(comment: PullRequestComment) -> str:
     author = comment.author.display_name if comment.author else ""
-    state = comment.state or comment.severity or ""
+    if comment.thread_resolved is not None:
+        state = "RESOLVED" if comment.thread_resolved else "OPEN"
+    else:
+        state = comment.state or comment.severity or ""
     anchor_info = ""
     if comment.anchor and comment.anchor.path:
         line = f":{comment.anchor.line}" if comment.anchor.line is not None else ""

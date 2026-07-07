@@ -186,6 +186,31 @@ def test_list_pull_request_comments() -> None:
     respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
         return_value=httpx.Response(200, json=activities_with_comments)
     )
+    # Live per-comment enrichment (state/threadResolved as of now, not at post time)
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 100,
+                "text": "Looks good overall, but please fix the naming",
+                "state": "OPEN",
+                "threadResolved": False,
+                "version": 0,
+            },
+        )
+    )
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/102").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 102,
+                "text": "This line needs refactoring",
+                "state": "RESOLVED",
+                "threadResolved": True,
+                "version": 1,
+            },
+        )
+    )
 
     result = client.list_pull_request_comments("PROJ", "my-repo", 1)
 
@@ -193,7 +218,8 @@ def test_list_pull_request_comments() -> None:
     assert isinstance(result[0], PullRequestComment)
     assert result[0].id == 100
     assert result[0].text == "Looks good overall, but please fix the naming"
-    # Threaded reply
+    assert result[0].thread_resolved is False
+    # Threaded reply (untouched by enrichment)
     assert len(result[0].comments) == 1
     assert result[0].comments[0].id == 101
     # Inline comment with anchor
@@ -201,6 +227,7 @@ def test_list_pull_request_comments() -> None:
     assert result[1].anchor.path == "src/main.py"
     assert result[1].anchor.line == 42
     assert result[1].state == "RESOLVED"
+    assert result[1].thread_resolved is True
 
 
 @respx.mock
@@ -242,6 +269,11 @@ def test_list_pull_request_comments_activity_level_anchor() -> None:
     }
     respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
         return_value=httpx.Response(200, json=activities)
+    )
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/3836879").mock(
+        return_value=httpx.Response(
+            200, json={"id": 3836879, "text": "`go mod tidy`?", "state": "OPEN", "threadResolved": False, "version": 0}
+        )
     )
 
     result = client.list_pull_request_comments("PROJ", "my-repo", 1)
@@ -297,6 +329,93 @@ def test_list_pull_request_activities_exposes_comment_anchor() -> None:
     assert result[0].comment is not None
     assert result[0].comment.anchor is not None
     assert result[0].comment.anchor.path == "go.sum"
+
+
+# ---------------------------------------------------------------------------
+# list_pull_request_comments — thread-resolved enrichment (regression)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_list_pull_request_comments_reports_thread_resolved_despite_stale_activity_state() -> None:
+    """Bitbucket never rewrites the activity feed after a comment is resolved,
+    so the activity-derived `state` is always "OPEN". The live per-comment
+    fetch must surface the real, current `threadResolved` value instead.
+    """
+    activities = {
+        "size": 1,
+        "limit": 25,
+        "isLastPage": True,
+        "values": [
+            {
+                "id": 20,
+                "action": "COMMENTED",
+                "createdDate": 1713200000000,
+                "comment": {
+                    "id": 200,
+                    "text": "Please double check this",
+                    "author": {"name": "alice", "displayName": "Alice Lee"},
+                    "severity": "NORMAL",
+                    "state": "OPEN",  # stale — thread was resolved after this snapshot
+                    "version": 0,
+                    "comments": [],
+                },
+            },
+        ],
+        "start": 0,
+    }
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
+        return_value=httpx.Response(200, json=activities)
+    )
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/200").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": 200, "text": "Please double check this", "state": "OPEN", "threadResolved": True, "version": 0},
+        )
+    )
+
+    result = client.list_pull_request_comments("PROJ", "my-repo", 1)
+
+    assert len(result) == 1
+    assert result[0].state == "OPEN"  # per-comment flag, largely vestigial
+    assert result[0].thread_resolved is True  # what the Bitbucket UI actually shows
+
+
+@respx.mock
+def test_list_pull_request_comments_skips_enrichment_when_disabled() -> None:
+    activities = {
+        "size": 1,
+        "limit": 25,
+        "isLastPage": True,
+        "values": [
+            {
+                "id": 21,
+                "action": "COMMENTED",
+                "createdDate": 1713200000000,
+                "comment": {
+                    "id": 201,
+                    "text": "Some comment",
+                    "author": {"name": "alice", "displayName": "Alice Lee"},
+                    "severity": "NORMAL",
+                    "state": "OPEN",
+                    "version": 0,
+                    "comments": [],
+                },
+            },
+        ],
+        "start": 0,
+    }
+    route = respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/activities").mock(
+        return_value=httpx.Response(200, json=activities)
+    )
+    # No mock registered for GET .../comments/201 — if the client tried to call
+    # it, respx would raise and fail the test.
+
+    result = client.list_pull_request_comments("PROJ", "my-repo", 1, include_thread_resolved=False)
+
+    assert route.called
+    assert len(result) == 1
+    assert result[0].thread_resolved is None
 
 
 # ---------------------------------------------------------------------------
