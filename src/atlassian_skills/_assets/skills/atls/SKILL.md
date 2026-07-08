@@ -51,8 +51,13 @@ atls
 │   ├── branch       list
 │   ├── file         get
 │   ├── comment      add, reply, update, delete, resolve, reopen
-│   └── task         list, get, create, update, delete
+│   └── task         list, get, create, update, delete, resolve, reopen
 ```
+
+## comment resolve vs task resolve (BBDC: 2 separate fields)
+- `comment resolve|reopen`: flips `threadResolved` (UI "Resolved" pill). Any comment/severity.
+- `task resolve|reopen`: flips `state` (RESOLVED/OPEN) on a BLOCKER comment ("task"). Takes **comment_id** (not `task list`'s task_id). Errors on NORMAL comments — use `comment resolve` instead.
+- Independent: resolving thread ≠ completing task.
 
 ## Format selection
 1. List/scan many items? → `--format=compact` (default, fewest tokens)

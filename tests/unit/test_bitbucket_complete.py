@@ -10,6 +10,7 @@ import respx
 from atlassian_skills.bitbucket.client import BitbucketClient
 from atlassian_skills.bitbucket.models import BuildStatus, DiffStat, PullRequest, PullRequestComment, Task
 from atlassian_skills.core.auth import Credential
+from atlassian_skills.core.errors import ValidationError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "bitbucket"
 BASE_URL = "https://bitbucket.example.com"
@@ -76,14 +77,21 @@ def test_delete_comment_version_param() -> None:
 
 
 # ---------------------------------------------------------------------------
-# resolve_comment (full body + state)
+# resolve_comment (thread resolution — threadResolved, NOT state)
 # ---------------------------------------------------------------------------
 
 
 @respx.mock
-def test_resolve_comment_sends_full_body() -> None:
-    current = {"id": 100, "text": "Please fix this", "version": 1}
-    resolved = {"id": 100, "text": "Please fix this", "version": 2, "state": "RESOLVED"}
+def test_resolve_comment_sends_thread_resolved_not_state() -> None:
+    current = {"id": 100, "text": "Please fix this", "version": 1, "severity": "NORMAL", "state": "OPEN"}
+    resolved = {
+        "id": 100,
+        "text": "Please fix this",
+        "version": 2,
+        "severity": "NORMAL",
+        "state": "OPEN",
+        "threadResolved": True,
+    }
 
     respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
         return_value=httpx.Response(200, json=current)
@@ -94,33 +102,174 @@ def test_resolve_comment_sends_full_body() -> None:
 
     result = client.resolve_comment("PROJ", "my-repo", 1, 100)
 
-    assert result.state == "RESOLVED"
+    assert result.thread_resolved is True
+    assert result.state == "OPEN"  # untouched
     sent = json.loads(route.calls[0].request.content)
     assert sent["text"] == "Please fix this"
-    assert sent["state"] == "RESOLVED"
+    assert sent["threadResolved"] is True
+    assert "state" not in sent
     assert sent["version"] == 1
 
 
-# ---------------------------------------------------------------------------
-# reopen_comment
-# ---------------------------------------------------------------------------
-
-
 @respx.mock
-def test_reopen_comment() -> None:
-    current = {"id": 100, "text": "Fixed now", "version": 2, "state": "RESOLVED"}
-    reopened = {"id": 100, "text": "Fixed now", "version": 3, "state": "OPEN"}
+def test_resolve_comment_raises_if_server_ignores_thread_resolved() -> None:
+    current = {"id": 100, "text": "text", "version": 1}
+    # Server echoes back without applying the change
+    stale = {"id": 100, "text": "text", "version": 2, "threadResolved": False}
 
     respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
         return_value=httpx.Response(200, json=current)
     )
     respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
+        return_value=httpx.Response(200, json=stale)
+    )
+
+    with pytest.raises(ValidationError):
+        client.resolve_comment("PROJ", "my-repo", 1, 100)
+
+
+# ---------------------------------------------------------------------------
+# reopen_comment (thread resolution)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_reopen_comment() -> None:
+    current = {"id": 100, "text": "Fixed now", "version": 2, "threadResolved": True}
+    reopened = {"id": 100, "text": "Fixed now", "version": 3, "threadResolved": False}
+
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/100").mock(
         return_value=httpx.Response(200, json=reopened)
     )
 
     result = client.reopen_comment("PROJ", "my-repo", 1, 100)
 
+    assert result.thread_resolved is False
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["threadResolved"] is False
+    assert "state" not in sent
+
+
+# ---------------------------------------------------------------------------
+# resolve_task / reopen_task (task = severity=BLOCKER comment, state field)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_resolve_task_sends_state_not_thread_resolved() -> None:
+    current = {"id": 200, "text": "Fix the bug", "version": 0, "severity": "BLOCKER", "state": "OPEN"}
+    resolved = {"id": 200, "text": "Fix the bug", "version": 1, "severity": "BLOCKER", "state": "RESOLVED"}
+
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/200").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/200").mock(
+        return_value=httpx.Response(200, json=resolved)
+    )
+
+    result = client.resolve_task("PROJ", "my-repo", 1, 200)
+
+    assert result.state == "RESOLVED"
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["state"] == "RESOLVED"
+    assert "threadResolved" not in sent
+    assert sent["version"] == 0
+
+
+@respx.mock
+def test_resolve_task_rejects_normal_comment() -> None:
+    current = {"id": 201, "text": "Just a note", "version": 0, "severity": "NORMAL", "state": "OPEN"}
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/201").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    put_route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/201").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+
+    with pytest.raises(ValidationError, match=r"not a task \(severity=NORMAL\)"):
+        client.resolve_task("PROJ", "my-repo", 1, 201)
+
+    assert not put_route.called  # no write attempted
+
+
+@respx.mock
+def test_reopen_task_rejects_normal_comment() -> None:
+    current = {"id": 202, "text": "Just a note", "version": 0, "severity": "NORMAL", "state": "OPEN"}
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/202").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    put_route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/202").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+
+    with pytest.raises(ValidationError, match=r"not a task \(severity=NORMAL\)"):
+        client.reopen_task("PROJ", "my-repo", 1, 202)
+
+    assert not put_route.called
+
+
+@respx.mock
+def test_reopen_task_success() -> None:
+    current = {"id": 203, "text": "Fix it", "version": 3, "severity": "BLOCKER", "state": "RESOLVED"}
+    reopened = {"id": 203, "text": "Fix it", "version": 4, "severity": "BLOCKER", "state": "OPEN"}
+
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/203").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/203").mock(
+        return_value=httpx.Response(200, json=reopened)
+    )
+
+    result = client.reopen_task("PROJ", "my-repo", 1, 203)
+
     assert result.state == "OPEN"
+
+
+@respx.mock
+def test_resolve_task_conflict_retries_once_with_fresh_version() -> None:
+    """409 on the first PUT (stale auto-fetched version) triggers one refetch+retry."""
+    first_get = {"id": 300, "text": "Fix it", "version": 0, "severity": "BLOCKER", "state": "OPEN"}
+    second_get = {"id": 300, "text": "Fix it", "version": 1, "severity": "BLOCKER", "state": "OPEN"}
+    resolved = {"id": 300, "text": "Fix it", "version": 2, "severity": "BLOCKER", "state": "RESOLVED"}
+
+    get_route = respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/300")
+    get_route.side_effect = [
+        httpx.Response(200, json=first_get),
+        httpx.Response(200, json=second_get),
+    ]
+    put_route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/300")
+    put_route.side_effect = [
+        httpx.Response(409, json={"message": "stale version"}),
+        httpx.Response(200, json=resolved),
+    ]
+
+    result = client.resolve_task("PROJ", "my-repo", 1, 300)
+
+    assert result.state == "RESOLVED"
+    sent_versions = [json.loads(c.request.content)["version"] for c in put_route.calls]
+    assert sent_versions == [0, 1]
+
+
+@respx.mock
+def test_resolve_comment_explicit_version_conflict_not_retried() -> None:
+    """An explicit --version that's stale surfaces ConflictError instead of silently retrying."""
+    from atlassian_skills.core.errors import ConflictError
+
+    current = {"id": 400, "text": "text", "version": 5}
+    respx.get(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/400").mock(
+        return_value=httpx.Response(200, json=current)
+    )
+    put_route = respx.put(f"{BASE_URL}{API}/projects/PROJ/repos/my-repo/pull-requests/1/comments/400").mock(
+        return_value=httpx.Response(409, json={"message": "stale version"})
+    )
+
+    with pytest.raises(ConflictError):
+        client.resolve_comment("PROJ", "my-repo", 1, 400, version=1)
+
+    assert put_route.call_count == 1  # no retry when version was explicit
 
 
 # ---------------------------------------------------------------------------

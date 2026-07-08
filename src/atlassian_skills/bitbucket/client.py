@@ -17,7 +17,7 @@ from atlassian_skills.bitbucket.models import (
 )
 from atlassian_skills.core.auth import Credential
 from atlassian_skills.core.client import BaseClient
-from atlassian_skills.core.errors import NotFoundError, ValidationError
+from atlassian_skills.core.errors import ConflictError, NotFoundError, ValidationError
 
 
 def _merge_comment_anchor(activity: dict[str, Any]) -> dict[str, Any]:
@@ -500,12 +500,20 @@ class BitbucketClient(BaseClient):
         *,
         text: str,
         version: int | None = None,
+        severity: str | None = None,
     ) -> PullRequestComment:
-        """PUT .../comments/{id} — requires full text + version."""
+        """PUT .../comments/{id} — requires full text + version.
+
+        `severity` (NORMAL/BLOCKER) is optional and lets a NORMAL comment be
+        explicitly promoted to a task (or vice versa). It is independent of
+        `resolve_comment`/`resolve_task` below.
+        """
         if version is None:
             current = self._get_comment(project, repo, pr_id, comment_id)
             version = current.get("version", 0)
         payload: dict[str, Any] = {"text": text, "version": version}
+        if severity:
+            payload["severity"] = severity.upper()
         data = self.put(
             f"{self.API}{self._pr_path(project, repo)}/{pr_id}/comments/{comment_id}",
             json=payload,
@@ -530,6 +538,42 @@ class BitbucketClient(BaseClient):
             params={"version": version},
         )
 
+    def _put_comment_field(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        comment_id: int,
+        *,
+        field: str,
+        value: Any,
+        version: int | None,
+        current: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """PUT a single field (`state` or `threadResolved`) onto a comment.
+
+        BBDC's comment PUT is a full-replace, so `text` and `version` from a
+        live GET are always included alongside the target field. Optimistic
+        locking: if `version` was auto-fetched (caller passed None) and the
+        server returns 409, the comment is refetched once and the PUT retried
+        with the fresh version. If the caller supplied an explicit `version`,
+        a 409 is surfaced as-is (they asked for that exact version).
+        """
+        auto_version = version is None
+        if current is None:
+            current = self._get_comment(project, repo, pr_id, comment_id)
+        v = version if version is not None else current.get("version", 0)
+        payload: dict[str, Any] = {"text": current.get("text", ""), "version": v, field: value}
+        url = f"{self.API}{self._pr_path(project, repo)}/{pr_id}/comments/{comment_id}"
+        try:
+            return self.put(url, json=payload).json()  # type: ignore[no-any-return]
+        except ConflictError:
+            if not auto_version:
+                raise
+            current = self._get_comment(project, repo, pr_id, comment_id)
+            payload["version"] = current.get("version", 0)
+            return self.put(url, json=payload).json()  # type: ignore[no-any-return]
+
     def resolve_comment(
         self,
         project: str,
@@ -539,19 +583,22 @@ class BitbucketClient(BaseClient):
         *,
         version: int | None = None,
     ) -> PullRequestComment:
-        """PUT .../comments/{id} with state=RESOLVED — requires full text+version."""
-        current = self._get_comment(project, repo, pr_id, comment_id)
-        if version is None:
-            version = current.get("version", 0)
-        payload: dict[str, Any] = {
-            "text": current.get("text", ""),
-            "version": version,
-            "state": "RESOLVED",
-        }
-        data = self.put(
-            f"{self.API}{self._pr_path(project, repo)}/{pr_id}/comments/{comment_id}",
-            json=payload,
-        ).json()
+        """PUT .../comments/{id} with threadResolved=true.
+
+        Flips the UI "Resolved" thread pill. Works on any comment regardless
+        of severity, and does NOT touch `state` (which only means something on
+        BLOCKER/task comments — see `resolve_task` for that). Verifies the
+        server actually applied `threadResolved` before returning, since BBDC
+        can silently ignore an unexpected field.
+        """
+        data = self._put_comment_field(
+            project, repo, pr_id, comment_id, field="threadResolved", value=True, version=version
+        )
+        if data.get("threadResolved") is not True:
+            raise ValidationError(
+                f"Bitbucket did not mark comment {comment_id}'s thread as resolved "
+                f"(server returned threadResolved={data.get('threadResolved')!r})"
+            )
         return PullRequestComment.model_validate(data)
 
     def reopen_comment(
@@ -563,19 +610,80 @@ class BitbucketClient(BaseClient):
         *,
         version: int | None = None,
     ) -> PullRequestComment:
-        """PUT .../comments/{id} with state=OPEN — requires full text+version."""
+        """PUT .../comments/{id} with threadResolved=false — reopens the thread.
+
+        Does NOT touch `state`. See `resolve_comment` for details.
+        """
+        data = self._put_comment_field(
+            project, repo, pr_id, comment_id, field="threadResolved", value=False, version=version
+        )
+        if data.get("threadResolved") is not False:
+            raise ValidationError(
+                f"Bitbucket did not reopen comment {comment_id}'s thread "
+                f"(server returned threadResolved={data.get('threadResolved')!r})"
+            )
+        return PullRequestComment.model_validate(data)
+
+    def resolve_task(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        comment_id: int,
+        *,
+        version: int | None = None,
+    ) -> PullRequestComment:
+        """PUT .../comments/{id} with state=RESOLVED — completes a task.
+
+        Only valid on severity=BLOCKER comments (i.e. "tasks"). Does NOT touch
+        `threadResolved` — completing a task doesn't flip the UI resolved pill.
+        Raises ValidationError if the target comment is NORMAL.
+        """
         current = self._get_comment(project, repo, pr_id, comment_id)
-        if version is None:
-            version = current.get("version", 0)
-        payload: dict[str, Any] = {
-            "text": current.get("text", ""),
-            "version": version,
-            "state": "OPEN",
-        }
-        data = self.put(
-            f"{self.API}{self._pr_path(project, repo)}/{pr_id}/comments/{comment_id}",
-            json=payload,
-        ).json()
+        severity = current.get("severity") or "NORMAL"
+        if severity != "BLOCKER":
+            raise ValidationError(
+                f"comment {comment_id} is not a task (severity={severity}); "
+                "use `comment resolve` to resolve the thread instead."
+            )
+        data = self._put_comment_field(
+            project, repo, pr_id, comment_id, field="state", value="RESOLVED", version=version, current=current
+        )
+        if data.get("state") != "RESOLVED":
+            raise ValidationError(
+                f"Bitbucket did not mark task (comment {comment_id}) as resolved "
+                f"(server returned state={data.get('state')!r})"
+            )
+        return PullRequestComment.model_validate(data)
+
+    def reopen_task(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        comment_id: int,
+        *,
+        version: int | None = None,
+    ) -> PullRequestComment:
+        """PUT .../comments/{id} with state=OPEN — reopens a task.
+
+        Only valid on severity=BLOCKER comments. Raises ValidationError if the
+        target comment is NORMAL.
+        """
+        current = self._get_comment(project, repo, pr_id, comment_id)
+        severity = current.get("severity") or "NORMAL"
+        if severity != "BLOCKER":
+            raise ValidationError(
+                f"comment {comment_id} is not a task (severity={severity}); "
+                "use `comment reopen` to reopen the thread instead."
+            )
+        data = self._put_comment_field(
+            project, repo, pr_id, comment_id, field="state", value="OPEN", version=version, current=current
+        )
+        if data.get("state") != "OPEN":
+            raise ValidationError(
+                f"Bitbucket did not reopen task (comment {comment_id}) (server returned state={data.get('state')!r})"
+            )
         return PullRequestComment.model_validate(data)
 
     # ------------------------------------------------------------------

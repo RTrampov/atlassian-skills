@@ -304,11 +304,14 @@ def pr_comments(
             for c in comments:
                 author = c.author.display_name if c.author else "?"
                 state_tag = "[RESOLVED] " if c.thread_resolved else ""
+                task_tag = ""
+                if c.severity == "BLOCKER":
+                    task_tag = "[TASK-DONE] " if c.state == "RESOLVED" else "[TASK] "
                 loc = ""
                 if c.anchor and c.anchor.path:
                     line = f":{c.anchor.line}" if c.anchor.line is not None else ""
                     loc = f"({c.anchor.path}{line}) "
-                typer.echo(f"#{c.id} {loc}{state_tag}{author}: {c.text or ''}")
+                typer.echo(f"#{c.id} {loc}{state_tag}{task_tag}{author}: {c.text or ''}")
     except AtlasError as e:
         _handle_error(e, fmt)
 
@@ -756,6 +759,7 @@ def comment_update(
     pr_id: int = typer.Argument(..., help="Pull request ID"),
     comment_id: int = typer.Argument(..., help="Comment ID"),
     body_file: str = typer.Option(..., "--body-file", help="New body file (- for stdin)"),
+    severity: str | None = typer.Option(None, "--severity", help="Promote/demote: NORMAL or BLOCKER (BLOCKER == task)"),
     version: int | None = typer.Option(None, "--version", help="Comment version for optimistic locking"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing"),
 ) -> None:
@@ -768,6 +772,8 @@ def comment_update(
         payload: dict[str, Any] = {"text": text}
         if version is not None:
             payload["version"] = version
+        if severity:
+            payload["severity"] = severity.upper()
         if dry_run:
             url = (
                 f"{client.base_url}{client.API}/projects/{project}/repos/{repo}"
@@ -775,7 +781,7 @@ def comment_update(
             )
             typer.echo(format_dry_run("PUT", url, body=payload, fmt=fmt.value))
             return
-        result = client.update_comment(project, repo, pr_id, comment_id, text=text, version=version)
+        result = client.update_comment(project, repo, pr_id, comment_id, text=text, version=version, severity=severity)
         typer.echo(
             format_output(
                 WriteResult(key=f"PR-{pr_id}#comment-{result.id}", action="updated", summary=result.text), fmt
@@ -828,7 +834,11 @@ def comment_resolve(
     version: int | None = typer.Option(None, "--version", help="Comment version for optimistic locking"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing"),
 ) -> None:
-    """Resolve a comment on a pull request."""
+    """Resolve a comment THREAD (sets threadResolved=true; the UI "Resolved" pill).
+
+    Works on any comment regardless of severity and does not change `state`.
+    To complete a BLOCKER task instead, use `bitbucket task resolve`.
+    """
     ctx.ensure_object(dict)
     fmt = _fmt(ctx.obj)
     try:
@@ -838,7 +848,7 @@ def comment_resolve(
                 f"{client.base_url}{client.API}/projects/{project}/repos/{repo}"
                 f"/pull-requests/{pr_id}/comments/{comment_id}"
             )
-            typer.echo(format_dry_run("PUT", url, body={"state": "RESOLVED"}, fmt=fmt.value))
+            typer.echo(format_dry_run("PUT", url, body={"threadResolved": True}, fmt=fmt.value))
             return
         result = client.resolve_comment(project, repo, pr_id, comment_id, version=version)
         typer.echo(
@@ -860,7 +870,11 @@ def comment_reopen(
     version: int | None = typer.Option(None, "--version", help="Comment version for optimistic locking"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing"),
 ) -> None:
-    """Reopen a resolved comment on a pull request."""
+    """Reopen a comment THREAD (sets threadResolved=false).
+
+    Does not change `state`. To reopen a BLOCKER task instead, use
+    `bitbucket task reopen`.
+    """
     ctx.ensure_object(dict)
     fmt = _fmt(ctx.obj)
     try:
@@ -870,7 +884,7 @@ def comment_reopen(
                 f"{client.base_url}{client.API}/projects/{project}/repos/{repo}"
                 f"/pull-requests/{pr_id}/comments/{comment_id}"
             )
-            typer.echo(format_dry_run("PUT", url, body={"state": "OPEN"}, fmt=fmt.value))
+            typer.echo(format_dry_run("PUT", url, body={"threadResolved": False}, fmt=fmt.value))
             return
         result = client.reopen_comment(project, repo, pr_id, comment_id, version=version)
         typer.echo(
@@ -998,6 +1012,79 @@ def task_update(
         result = client.update_task(task_id, state=state, text=text)
         typer.echo(
             format_output(WriteResult(key=f"PR-{pr_id}#task-{result.id}", action="updated", summary=result.text), fmt)
+        )
+    except AtlasError as e:
+        _handle_error(e, fmt)
+
+
+@task_app.command("resolve")
+def task_resolve(
+    ctx: typer.Context,
+    project: str = typer.Argument(..., help="Project key"),
+    repo: str = typer.Argument(..., help="Repository slug"),
+    pr_id: int = typer.Argument(..., help="Pull request ID"),
+    comment_id: int = typer.Argument(
+        ..., help="Comment ID of the task (same ID space as `comment`, NOT the legacy task_id)"
+    ),
+    version: int | None = typer.Option(None, "--version", help="Comment version for optimistic locking"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing"),
+) -> None:
+    """Complete a task (sets state=RESOLVED on a BLOCKER comment).
+
+    Only valid on severity=BLOCKER comments; fails with a validation error on
+    NORMAL comments (use `comment resolve` for those). Does not touch
+    threadResolved / the UI resolved pill.
+    """
+    ctx.ensure_object(dict)
+    fmt = _fmt(ctx.obj)
+    try:
+        client = _make_client(ctx.obj)
+        if dry_run:
+            url = (
+                f"{client.base_url}{client.API}/projects/{project}/repos/{repo}"
+                f"/pull-requests/{pr_id}/comments/{comment_id}"
+            )
+            typer.echo(format_dry_run("PUT", url, body={"state": "RESOLVED"}, fmt=fmt.value))
+            return
+        result = client.resolve_task(project, repo, pr_id, comment_id, version=version)
+        typer.echo(
+            format_output(WriteResult(key=f"PR-{pr_id}#task-{result.id}", action="resolved", summary=result.text), fmt)
+        )
+    except AtlasError as e:
+        _handle_error(e, fmt)
+
+
+@task_app.command("reopen")
+def task_reopen(
+    ctx: typer.Context,
+    project: str = typer.Argument(..., help="Project key"),
+    repo: str = typer.Argument(..., help="Repository slug"),
+    pr_id: int = typer.Argument(..., help="Pull request ID"),
+    comment_id: int = typer.Argument(
+        ..., help="Comment ID of the task (same ID space as `comment`, NOT the legacy task_id)"
+    ),
+    version: int | None = typer.Option(None, "--version", help="Comment version for optimistic locking"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing"),
+) -> None:
+    """Reopen a task (sets state=OPEN on a BLOCKER comment).
+
+    Only valid on severity=BLOCKER comments; fails with a validation error on
+    NORMAL comments (use `comment reopen` for those).
+    """
+    ctx.ensure_object(dict)
+    fmt = _fmt(ctx.obj)
+    try:
+        client = _make_client(ctx.obj)
+        if dry_run:
+            url = (
+                f"{client.base_url}{client.API}/projects/{project}/repos/{repo}"
+                f"/pull-requests/{pr_id}/comments/{comment_id}"
+            )
+            typer.echo(format_dry_run("PUT", url, body={"state": "OPEN"}, fmt=fmt.value))
+            return
+        result = client.reopen_task(project, repo, pr_id, comment_id, version=version)
+        typer.echo(
+            format_output(WriteResult(key=f"PR-{pr_id}#task-{result.id}", action="reopened", summary=result.text), fmt)
         )
     except AtlasError as e:
         _handle_error(e, fmt)
