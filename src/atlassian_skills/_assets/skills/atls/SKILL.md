@@ -25,6 +25,11 @@ Load this skill before any `atls` command. Use `--help` for uncommon operations 
 - `compare` is a local file against the live remote; `diff` is two things already on the server.
 - Main groups: `jira`, `confluence`, `bitbucket`. There is no runtime `state` group.
 
+## comment resolve vs task resolve (BBDC: 2 separate fields)
+- `comment resolve|reopen`: flips `threadResolved` (UI "Resolved" pill). Any comment/severity.
+- `task resolve|reopen`: flips `state` (RESOLVED/OPEN) on a BLOCKER comment ("task"). Takes **comment_id** (not `task list`'s task_id). Errors on NORMAL comments - use `comment resolve` instead.
+- Independent: resolving a thread ≠ completing a task.
+
 ## Invariants
 
 Run only `next_actions[].argv`, exactly as returned; never compose one. `requires_user_approval=true` is never auto-run. Zero PUT before approval or on an unresolved conflict; storage publishes only the approved hash.
