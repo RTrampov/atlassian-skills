@@ -25,6 +25,9 @@ use the same commands — on Windows they run identically in PowerShell, cmd, or
 ### Added
 - **Custom HTTP headers per profile.** Send extra headers with every Jira, Confluence, and Bitbucket request via `[profiles.<name>.extra_headers]` in `config.toml`, `ATLS_<PROFILE>_EXTRA_HEADERS` (comma-separated `Name=value` pairs), or an `env_file`. Configured header values are masked in `--verbose` output.
 
+### Changed
+- **Bitbucket comment resolve/reopen now flip the thread, not the task.** `atls bitbucket comment resolve|reopen` set `threadResolved` (the UI "Resolved" pill) and no longer write `state`, which means nothing on NORMAL comments. Completing a BLOCKER task moved to `atls bitbucket task resolve|reopen`, which takes the comment ID and refuses NORMAL comments. `comment update` gains `--severity NORMAL|BLOCKER` to promote or demote a comment to a task.
+
 ### Fixed
 - **Bitbucket comment resolved status was always reported as "OPEN"**, even for threads
   the Bitbucket UI shows as "Resolved". `atls bitbucket pr comments` built comment state

@@ -452,14 +452,14 @@ With `--format=json`, structured result and error envelopes are written to stdou
 >
 > `compare` means "this local file against the page as it stands now"; `diff` means two things that already exist on the server — `page diff` between two versions, `bitbucket pr diff`.
 
-### Bitbucket (33 commands: 11 read + 22 write)
+### Bitbucket (35 commands: 11 read + 24 write)
 - `bitbucket project list`
 - `bitbucket repo list|get`
 - `bitbucket pr list|get|diff|comments|commits|activity|create|update|merge|decline|approve|unapprove|needs-work|reopen|diffstat|statuses|pending-review`
 - `bitbucket branch list`
 - `bitbucket file get`
 - `bitbucket comment add|reply|update|delete|resolve|reopen`
-- `bitbucket task list|get|create|update|delete`
+- `bitbucket task list|get|create|update|delete|resolve|reopen`
 
 > All write commands support `--dry-run`. PR diff and file get treat `--format=md` as raw text passthrough.
 
