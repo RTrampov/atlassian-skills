@@ -25,10 +25,10 @@ Load this skill before any `atls` command. Use `--help` for uncommon operations 
 - `compare` is a local file against the live remote; `diff` is two things already on the server.
 - Main groups: `jira`, `confluence`, `bitbucket`. There is no runtime `state` group.
 
-## comment resolve vs task resolve (BBDC: 2 separate fields)
-- `comment resolve|reopen`: flips `threadResolved` (UI "Resolved" pill). Any comment/severity.
-- `task resolve|reopen`: flips `state` (RESOLVED/OPEN) on a BLOCKER comment ("task"). Takes **comment_id** (not `task list`'s task_id). Errors on NORMAL comments - use `comment resolve` instead.
-- Independent: resolving a thread ≠ completing a task.
+## Bitbucket: comment resolve vs task resolve
+- `comment resolve|reopen` sets `threadResolved` (UI "Resolved" pill) on any comment.
+- `task resolve|reopen` sets `state` on a BLOCKER comment, by comment_id (not `task list` id). NORMAL comments are refused.
+- Independent: resolving a thread does not complete a task.
 
 ## Invariants
 

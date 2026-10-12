@@ -30,6 +30,34 @@
     "reason": "Present only in the withdrawn 0.3.0 candidate (2e765e2). Never published, so removing it carries no public compatibility debt. File-first consent replaces it."
   },
   "entries": {
+    "bitbucket comment update": {
+      "classification": "changed",
+      "params": {
+        "severity": {
+          "classification": "added",
+          "reason": "Fork addition: promotes a NORMAL comment to a BLOCKER task, or demotes it back."
+        }
+      },
+      "reason": "Fork addition: a comment can change severity."
+    },
+    "bitbucket pr comments": {
+      "classification": "changed",
+      "params": {
+        "unresolved_only": {
+          "classification": "added",
+          "reason": "Fork addition: keeps only comment threads that are not resolved."
+        }
+      },
+      "reason": "Fork addition: --unresolved-only filter."
+    },
+    "bitbucket task reopen": {
+      "classification": "added",
+      "reason": "Fork addition: reopens a BLOCKER task (state=OPEN) without touching the thread's resolved pill."
+    },
+    "bitbucket task resolve": {
+      "classification": "added",
+      "reason": "Fork addition: completes a BLOCKER task (state=RESOLVED) without touching the thread's resolved pill."
+    },
     "confluence page copy": {
       "classification": "added",
       "plan_ref": "5.9",
